@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSafeScanTarget } from "../../../server/security";
+import { checkRateLimit, rateLimitHeaders } from "../../../server/rate-limit";
 import { advanceScanJob, createScanJob, listScanJobs } from "../../../server/scan-store";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,7 @@ const ScanInputSchema = z.object({
   projectId: z.string().uuid(),
   assetId: z.string().uuid(),
   target: z.string().min(3).max(2048),
-  scanMode: z.enum(['quick-perimeter', 'full-web', 'deep-api', 'container']),
+  scanMode: z.enum(["quick-perimeter", "full-web", "deep-api", "container"]),
   authorizationToken: z.string().min(20).max(256),
   localLabMode: z.boolean().default(false),
 });
@@ -21,6 +22,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const requestId = crypto.randomUUID();
+  const rateLimit = checkRateLimit(request, "scan-create", 10);
+  if (!rateLimit.allowed) {
+    return NextResponse.json({ success: false, error: { code: "RATE_LIMITED", message: "Too many scan requests. Try again later." }, requestId }, { status: 429, headers: { ...rateLimitHeaders(rateLimit), "Cache-Control": "no-store", "X-Request-ID": requestId } });
+  }
   try {
     const input = ScanInputSchema.parse(await request.json());
     await assertSafeScanTarget(input.target, input.localLabMode);
@@ -32,9 +37,9 @@ export async function POST(request: Request) {
     setTimeout(() => advanceScanJob(job.id, 76, "Correlating findings", "running"), 2300);
     setTimeout(() => advanceScanJob(job.id, 100, "Report anchored", "completed"), 3300);
 
-    return NextResponse.json({ success: true, data: job, requestId }, { status: 202, headers: { "Cache-Control": "no-store", "X-Request-ID": requestId, Location: `/api/scans/${job.id}` } });
+    return NextResponse.json({ success: true, data: job, requestId }, { status: 202, headers: { ...rateLimitHeaders(rateLimit), "Cache-Control": "no-store", "X-Request-ID": requestId, Location: `/api/scans/${job.id}` } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid scan request.";
-    return NextResponse.json({ success: false, error: { code: "INVALID_SCAN_REQUEST", message }, requestId }, { status: 400, headers: { "Cache-Control": "no-store", "X-Request-ID": requestId } });
+    return NextResponse.json({ success: false, error: { code: "INVALID_SCAN_REQUEST", message }, requestId }, { status: 400, headers: { ...rateLimitHeaders(rateLimit), "Cache-Control": "no-store", "X-Request-ID": requestId } });
   }
 }
