@@ -159,12 +159,27 @@ type LiveScanJob = {
   progress: number;
   currentStep: string;
   reportHash?: string;
+  finalUrl?: string;
+  httpStatus?: number;
+  checkedAt?: string;
+  findings?: Array<{
+    id: string;
+    title: string;
+    category: string;
+    severity: "low" | "medium" | "high";
+    confidence: number;
+    endpoint: string;
+    recommendation: string;
+    status: "open";
+  }>;
 };
 
 function LiveScans({ setView }: { setView: (view: View) => void }) {
   const [scan, setScan] = useState<LiveScanJob | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
+  const [target, setTarget] = useState("https://cybershield-xdr-kappa.vercel.app");
+  const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
     if (!scan?.id) return;
@@ -191,9 +206,10 @@ function LiveScans({ setView }: { setView: (view: View) => void }) {
         body: JSON.stringify({
           projectId: "00000000-0000-4000-8000-000000000001",
           assetId: "00000000-0000-4000-8000-000000000002",
-          target: "https://example.com",
+          target,
           scanMode: "quick-perimeter",
           authorizationToken: "demo-authorized-scan-token-2026",
+          authorizationConfirmed: authorized,
           localLabMode: false,
         }),
       });
@@ -208,9 +224,9 @@ function LiveScans({ setView }: { setView: (view: View) => void }) {
   };
 
   return <>
-    <div className="toolbar"><div className="search"><Search size={15} /><input placeholder="Search scan jobs, targets, or IDs" /></div><select className="select" defaultValue="all"><option value="all">All statuses</option><option>Running</option><option>Completed</option></select><button className="primary" onClick={startScan} disabled={starting || scan?.status === "running"}><Plus size={14} /> {starting ? "Starting…" : "Launch guarded scan"}</button></div>
+    <div className="toolbar" style={{ alignItems: "stretch", flexWrap: "wrap" }}><div className="search" style={{ flex: "1 1 420px" }}><Globe2 size={15} /><input aria-label="Target URL" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="https://your-authorized-site.example" /></div><select className="select" defaultValue="all"><option value="all">All statuses</option><option>Running</option><option>Completed</option></select><button className="primary" onClick={startScan} disabled={!authorized || starting || scan?.status === "running"}><Plus size={14} /> {starting ? "Starting…" : "Launch guarded scan"}</button><label style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 7, color: "var(--muted)", fontSize: 10, cursor: "pointer" }}><input type="checkbox" checked={authorized} onChange={(event) => setAuthorized(event.target.checked)} /> I own or have explicit authorization to assess this URL</label></div>
     {error && <div className="card" style={{ marginBottom: 14, color: "var(--red)", fontSize: 10 }}>● {error}</div>}
-    {scan && <div className="card scan-card" style={{ marginBottom: 14 }}><div className="scan-head"><div><div className="scan-domain">{scan.target}</div><div className="scan-meta">Quick perimeter · browser-triggered demo job · {scan.id.slice(0, 8)}…</div></div><span className={`severity ${scan.status === "completed" ? "info" : "high"}`}>{scan.status}</span></div><div className="scan-progress"><div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--muted)", marginBottom: 7 }}><span>{scan.currentStep}</span><span className="mono" style={{ color: scan.status === "completed" ? "var(--green)" : "var(--cyan)" }}>{scan.progress}%</span></div><div className="progress"><span style={{ width: `${scan.progress}%`, background: scan.status === "completed" ? "var(--green)" : "var(--cyan)" }} /></div></div><div style={{ display: "flex", gap: 19 }}>{["Queued", "Fingerprinting", "Analyzing", "Report"].map((step, index) => <div className={`scan-step ${scan.progress >= [0, 18, 48, 100][index] ? "active" : ""}`} key={step}><span className={`step-dot ${scan.progress >= [0, 18, 48, 100][index] ? "done" : ""}`} />{step}</div>)}</div>{scan.reportHash && <div className="ledger-hash mono" style={{ marginTop: 14 }}>Report hash {scan.reportHash}</div>}</div>}
+    {scan && <div className="card scan-card" style={{ marginBottom: 14 }}><div className="scan-head"><div><div className="scan-domain">{scan.target}</div><div className="scan-meta">Passive perimeter posture · browser-triggered job · {scan.id.slice(0, 8)}…</div></div><span className={`severity ${scan.status === "completed" ? "info" : scan.status === "failed" ? "critical" : "high"}`}>{scan.status}</span></div><div className="scan-progress"><div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--muted)", marginBottom: 7 }}><span>{scan.currentStep}</span><span className="mono" style={{ color: scan.status === "completed" ? "var(--green)" : "var(--cyan)" }}>{scan.progress}%</span></div><div className="progress"><span style={{ width: `${scan.progress}%`, background: scan.status === "completed" ? "var(--green)" : "var(--cyan)" }} /></div></div><div style={{ display: "flex", gap: 19 }}>{["Queued", "Fingerprinting", "Analyzing", "Report"].map((step, index) => <div className={`scan-step ${scan.progress >= [0, 18, 48, 100][index] ? "active" : ""}`} key={step}><span className={`step-dot ${scan.progress >= [0, 18, 48, 100][index] ? "done" : ""}`} />{step}</div>)}</div>{scan.finalUrl && <div className="scan-meta" style={{ marginTop: 13 }}>Final URL <span className="mono">{scan.finalUrl}</span>{scan.httpStatus ? ` · HTTP ${scan.httpStatus}` : ""}</div>}{scan.reportHash && <div className="ledger-hash mono" style={{ marginTop: 14 }}>Report hash {scan.reportHash}</div>}{scan.status === "completed" && <div className="ledger" style={{ marginTop: 14 }}><div className="ledger-entry"><div className="ledger-top"><span style={{ fontSize: 10, color: scan.findings?.length ? "var(--amber)" : "var(--green)" }}>{scan.findings?.length ? `${scan.findings.length} passive posture finding${scan.findings.length === 1 ? "" : "s"}` : "No passive posture issues detected"}</span><ShieldCheck size={14} color={scan.findings?.length ? "var(--amber)" : "var(--green)"} /></div>{scan.findings?.length ? <div style={{ display: "grid", gap: 10, marginTop: 11 }}>{scan.findings.map((finding) => <div key={finding.id} style={{ borderTop: "1px solid rgba(119,134,163,.1)", paddingTop: 9 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}><span style={{ fontSize: 10 }}>{finding.title}</span><span className={`severity ${finding.severity === "high" ? "high" : "info"}`}>{finding.severity}</span></div><div style={{ color: "var(--muted)", fontSize: 9, lineHeight: 1.5, marginTop: 4 }}>{finding.category} · {finding.endpoint} · {Math.round(finding.confidence * 100)}% confidence</div><div style={{ color: "#a9b7cf", fontSize: 9, lineHeight: 1.5, marginTop: 3 }}>{finding.recommendation}</div></div>)}</div> : <div className="ledger-meta" style={{ marginTop: 8 }}>This is an externally observable posture check, not proof that a site has never been breached.</div>}</div></div>}</div>}
     <div className="grid scan-grid"><div className="grid" style={{ gap: 12 }}>{[{ domain: "payments-service", mode: "Deep API + container", progress: 68, step: "Runtime behavior analysis", color: "var(--cyan)" }, { domain: "admin.northstar.dev", mode: "Full web application", progress: 100, step: "Report anchored", color: "var(--green)" }, { domain: "api.northstar.dev", mode: "Quick perimeter", progress: 100, step: "Completed 26 minutes ago", color: "var(--green)" }].map((item, i) => <div className="card scan-card" key={item.domain}><div className="scan-head"><div><div className="scan-domain">{item.domain}</div><div className="scan-meta">{item.mode} · initiated by Ram Singh · {i === 0 ? "9 min ago" : "Today"}</div></div><span className="severity info">{i === 0 ? "Running" : "Verified"}</span></div><div className="scan-progress"><div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--muted)", marginBottom: 7 }}><span>Worker progress</span><span className="mono" style={{ color: item.color }}>{item.progress}%</span></div><div className="progress"><span style={{ width: `${item.progress}%`, background: item.color }} /></div></div><div style={{ display: "flex", gap: 19 }}>{["Queued", "Fingerprinting", "Analyzing", "Report"].map((step, stepIndex) => <div className={`scan-step ${stepIndex < (i === 0 ? 2 : 4) ? "active" : ""}`} key={step}><span className={`step-dot ${stepIndex < (i === 0 ? 2 : 4) ? stepIndex === 1 && i === 0 ? "active" : "done" : ""}`} />{step}</div>)}</div>{i === 0 && <div style={{ marginTop: 16, borderTop: "1px solid rgba(119,134,163,.1)", paddingTop: 12, color: "var(--muted)", fontSize: 9 }}><TerminalSquare size={12} style={{ verticalAlign: "middle", marginRight: 5, color: "var(--cyan)" }} /> Live stream available <button onClick={() => setView("lab")} className="view-all" style={{ marginLeft: 7 }}>Open terminal →</button></div>}</div>)}</div><div className="card full-card"><div className="eyebrow">Worker safeguards</div><h2 style={{ fontSize: 17, margin: "10px 0 8px", letterSpacing: "-.04em" }}>Your scans run isolated.</h2><p style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.6, margin: "0 0 20px" }}>Every worker is constrained by SSRF protection, DNS rebinding checks, private-IP deny lists, and an explicit authorization token.</p><div className="ledger"><div className="ledger-entry"><div className="ledger-top"><span style={{ fontSize: 10, color: "var(--green)" }}>● Guardrails active</span><ShieldCheck size={14} color="var(--green)" /></div><div className="ledger-meta"><span>OWASP ASVS 4.0.3</span><span>·</span><span>Zero trust</span></div></div><div className="ledger-entry"><div className="ledger-top"><span style={{ fontSize: 10 }}>Queue capacity</span><span className="mono" style={{ color: "var(--cyan)" }}>08 / 32</span></div><div className="progress" style={{ marginTop: 10 }}><span style={{ width: "25%" }} /></div></div></div></div></div>
   </>;
 }
