@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertSafeScanTarget } from "../../../server/security";
 import { checkRateLimit, rateLimitHeaders } from "../../../server/rate-limit";
-import { advanceScanJob, createScanJob, listScanJobs } from "../../../server/scan-store";
+import { runPassiveScan } from "../../../server/passive-scan";
+import { advanceScanJob, attachPassiveResult, createScanJob, listScanJobs } from "../../../server/scan-store";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,9 @@ const ScanInputSchema = z.object({
   projectId: z.string().uuid(),
   assetId: z.string().uuid(),
   target: z.string().min(3).max(2048),
-  scanMode: z.enum(["quick-perimeter", "full-web", "deep-api", "container"]),
+  scanMode: z.enum(['quick-perimeter', 'full-web', 'deep-api', 'container']),
   authorizationToken: z.string().min(20).max(256),
+  authorizationConfirmed: z.literal(true),
   localLabMode: z.boolean().default(false),
 });
 
@@ -34,8 +36,15 @@ export async function POST(request: Request) {
     // Local demo worker: production should enqueue this job in Redis/BullMQ.
     setTimeout(() => advanceScanJob(job.id, 18, "Fingerprinting", "running"), 700);
     setTimeout(() => advanceScanJob(job.id, 48, "Analyzing headers and cookies", "running"), 1500);
-    setTimeout(() => advanceScanJob(job.id, 76, "Correlating findings", "running"), 2300);
-    setTimeout(() => advanceScanJob(job.id, 100, "Report anchored", "completed"), 3300);
+    setTimeout(() => {
+      advanceScanJob(job.id, 76, "Running passive posture checks", "running");
+      void runPassiveScan(input.target, input.localLabMode).then((result) => {
+        attachPassiveResult(job.id, result);
+        advanceScanJob(job.id, 100, "Report anchored", "completed");
+      }).catch(() => {
+        advanceScanJob(job.id, 100, "Scan failed safely", "failed");
+      });
+    }, 2300);
 
     return NextResponse.json({ success: true, data: job, requestId }, { status: 202, headers: { ...rateLimitHeaders(rateLimit), "Cache-Control": "no-store", "X-Request-ID": requestId, Location: `/api/scans/${job.id}` } });
   } catch (error) {
