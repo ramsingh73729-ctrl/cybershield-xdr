@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
@@ -152,6 +152,69 @@ function Scans({ setView }: { setView: (view: View) => void }) {
   return <><div className="toolbar"><div className="search"><Search size={15} /><input placeholder="Search scan jobs, targets, or IDs" /></div><select className="select" defaultValue="all"><option value="all">All statuses</option><option>Running</option><option>Completed</option></select><button className="primary" onClick={() => setView("assets")}><Plus size={14} /> New scan</button></div><div className="grid scan-grid"><div className="grid" style={{ gap: 12 }}>{[{ domain: "payments-service", mode: "Deep API + container", progress: 68, step: "Runtime behavior analysis", color: "var(--cyan)" }, { domain: "admin.northstar.dev", mode: "Full web application", progress: 100, step: "Report anchored", color: "var(--green)" }, { domain: "api.northstar.dev", mode: "Quick perimeter", progress: 100, step: "Completed 26 minutes ago", color: "var(--green)" }].map((scan, i) => <div className="card scan-card" key={scan.domain}><div className="scan-head"><div><div className="scan-domain">{scan.domain}</div><div className="scan-meta">{scan.mode} · initiated by Ram Singh · {i === 0 ? "9 min ago" : "Today"}</div></div><span className={`severity ${i === 0 ? "info" : "info"}`}>{i === 0 ? "Running" : "Verified"}</span></div><div className="scan-progress"><div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--muted)", marginBottom: 7 }}><span>Worker progress</span><span className="mono" style={{ color: scan.color }}>{scan.progress}%</span></div><div className="progress"><span style={{ width: `${scan.progress}%`, background: scan.color }} /></div></div><div style={{ display: "flex", gap: 19 }}>{["Queued", "Fingerprinting", "Analyzing", "Report"].map((step, stepIndex) => <div className={`scan-step ${stepIndex < (i === 0 ? 2 : 4) ? "active" : ""}`} key={step}><span className={`step-dot ${stepIndex < (i === 0 ? 2 : 4) ? stepIndex === 1 && i === 0 ? "active" : "done" : ""}`} />{step}</div>)}</div>{i === 0 && <div style={{ marginTop: 16, borderTop: "1px solid rgba(119,134,163,.1)", paddingTop: 12, color: "var(--muted)", fontSize: 9 }}><TerminalSquare size={12} style={{ verticalAlign: "middle", marginRight: 5, color: "var(--cyan)" }} /> Live stream available <button onClick={() => setView("lab")} className="view-all" style={{ marginLeft: 7 }}>Open terminal →</button></div>}</div>)}</div><div className="card full-card"><div className="eyebrow">Worker safeguards</div><h2 style={{ fontSize: 17, margin: "10px 0 8px", letterSpacing: "-.04em" }}>Your scans run isolated.</h2><p style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.6, margin: "0 0 20px" }}>Every worker is constrained by SSRF protection, DNS rebinding checks, private-IP deny lists, and an explicit authorization token.</p><div className="ledger"><div className="ledger-entry"><div className="ledger-top"><span style={{ fontSize: 10, color: "var(--green)" }}>● Guardrails active</span><ShieldCheck size={14} color="var(--green)" /></div><div className="ledger-meta"><span>OWASP ASVS 4.0.3</span><span>·</span><span>Zero trust</span></div></div><div className="ledger-entry"><div className="ledger-top"><span style={{ fontSize: 10 }}>Queue capacity</span><span className="mono" style={{ color: "var(--cyan)" }}>08 / 32</span></div><div className="progress" style={{ marginTop: 10 }}><span style={{ width: "25%" }} /></div></div></div></div></div></>;
 }
 
+type LiveScanJob = {
+  id: string;
+  target: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress: number;
+  currentStep: string;
+  reportHash?: string;
+};
+
+function LiveScans({ setView }: { setView: (view: View) => void }) {
+  const [scan, setScan] = useState<LiveScanJob | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!scan?.id) return;
+    const events = new EventSource(`/api/scans/${scan.id}/progress`);
+    events.onmessage = (event) => {
+      try {
+        setScan(JSON.parse(event.data) as LiveScanJob);
+      } catch {
+        setError("The progress stream returned an invalid event.");
+        events.close();
+      }
+    };
+    events.onerror = () => events.close();
+    return () => events.close();
+  }, [scan?.id]);
+
+  const startScan = async () => {
+    setStarting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/scans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: "00000000-0000-4000-8000-000000000001",
+          assetId: "00000000-0000-4000-8000-000000000002",
+          target: "https://example.com",
+          scanMode: "quick-perimeter",
+          authorizationToken: "demo-authorized-scan-token-2026",
+          localLabMode: false,
+        }),
+      });
+      const payload: { data?: LiveScanJob; error?: { message?: string } } = await response.json();
+      if (!response.ok || !payload.data) throw new Error(payload.error?.message ?? "Unable to start the scan.");
+      setScan(payload.data);
+    } catch (scanError) {
+      setError(scanError instanceof Error ? scanError.message : "Unable to start the scan.");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return <>
+    <div className="toolbar"><div className="search"><Search size={15} /><input placeholder="Search scan jobs, targets, or IDs" /></div><select className="select" defaultValue="all"><option value="all">All statuses</option><option>Running</option><option>Completed</option></select><button className="primary" onClick={startScan} disabled={starting || scan?.status === "running"}><Plus size={14} /> {starting ? "Starting…" : "Launch guarded scan"}</button></div>
+    {error && <div className="card" style={{ marginBottom: 14, color: "var(--red)", fontSize: 10 }}>● {error}</div>}
+    {scan && <div className="card scan-card" style={{ marginBottom: 14 }}><div className="scan-head"><div><div className="scan-domain">{scan.target}</div><div className="scan-meta">Quick perimeter · browser-triggered demo job · {scan.id.slice(0, 8)}…</div></div><span className={`severity ${scan.status === "completed" ? "info" : "high"}`}>{scan.status}</span></div><div className="scan-progress"><div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--muted)", marginBottom: 7 }}><span>{scan.currentStep}</span><span className="mono" style={{ color: scan.status === "completed" ? "var(--green)" : "var(--cyan)" }}>{scan.progress}%</span></div><div className="progress"><span style={{ width: `${scan.progress}%`, background: scan.status === "completed" ? "var(--green)" : "var(--cyan)" }} /></div></div><div style={{ display: "flex", gap: 19 }}>{["Queued", "Fingerprinting", "Analyzing", "Report"].map((step, index) => <div className={`scan-step ${scan.progress >= [0, 18, 48, 100][index] ? "active" : ""}`} key={step}><span className={`step-dot ${scan.progress >= [0, 18, 48, 100][index] ? "done" : ""}`} />{step}</div>)}</div>{scan.reportHash && <div className="ledger-hash mono" style={{ marginTop: 14 }}>Report hash {scan.reportHash}</div>}</div>}
+    <div className="grid scan-grid"><div className="grid" style={{ gap: 12 }}>{[{ domain: "payments-service", mode: "Deep API + container", progress: 68, step: "Runtime behavior analysis", color: "var(--cyan)" }, { domain: "admin.northstar.dev", mode: "Full web application", progress: 100, step: "Report anchored", color: "var(--green)" }, { domain: "api.northstar.dev", mode: "Quick perimeter", progress: 100, step: "Completed 26 minutes ago", color: "var(--green)" }].map((item, i) => <div className="card scan-card" key={item.domain}><div className="scan-head"><div><div className="scan-domain">{item.domain}</div><div className="scan-meta">{item.mode} · initiated by Ram Singh · {i === 0 ? "9 min ago" : "Today"}</div></div><span className="severity info">{i === 0 ? "Running" : "Verified"}</span></div><div className="scan-progress"><div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--muted)", marginBottom: 7 }}><span>Worker progress</span><span className="mono" style={{ color: item.color }}>{item.progress}%</span></div><div className="progress"><span style={{ width: `${item.progress}%`, background: item.color }} /></div></div><div style={{ display: "flex", gap: 19 }}>{["Queued", "Fingerprinting", "Analyzing", "Report"].map((step, stepIndex) => <div className={`scan-step ${stepIndex < (i === 0 ? 2 : 4) ? "active" : ""}`} key={step}><span className={`step-dot ${stepIndex < (i === 0 ? 2 : 4) ? stepIndex === 1 && i === 0 ? "active" : "done" : ""}`} />{step}</div>)}</div>{i === 0 && <div style={{ marginTop: 16, borderTop: "1px solid rgba(119,134,163,.1)", paddingTop: 12, color: "var(--muted)", fontSize: 9 }}><TerminalSquare size={12} style={{ verticalAlign: "middle", marginRight: 5, color: "var(--cyan)" }} /> Live stream available <button onClick={() => setView("lab")} className="view-all" style={{ marginLeft: 7 }}>Open terminal →</button></div>}</div>)}</div><div className="card full-card"><div className="eyebrow">Worker safeguards</div><h2 style={{ fontSize: 17, margin: "10px 0 8px", letterSpacing: "-.04em" }}>Your scans run isolated.</h2><p style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.6, margin: "0 0 20px" }}>Every worker is constrained by SSRF protection, DNS rebinding checks, private-IP deny lists, and an explicit authorization token.</p><div className="ledger"><div className="ledger-entry"><div className="ledger-top"><span style={{ fontSize: 10, color: "var(--green)" }}>● Guardrails active</span><ShieldCheck size={14} color="var(--green)" /></div><div className="ledger-meta"><span>OWASP ASVS 4.0.3</span><span>·</span><span>Zero trust</span></div></div><div className="ledger-entry"><div className="ledger-top"><span style={{ fontSize: 10 }}>Queue capacity</span><span className="mono" style={{ color: "var(--cyan)" }}>08 / 32</span></div><div className="progress" style={{ marginTop: 10 }}><span style={{ width: "25%" }} /></div></div></div></div></div>
+  </>;
+}
+
 function Findings({ setView }: { setView: (view: View) => void }) {
   const [active, setActive] = useState("All findings");
   const filtered = useMemo(() => active === "All findings" ? findings : findings.filter((f) => f.severity === active.toLowerCase().replace(" risk", "")), [active]);
@@ -170,5 +233,5 @@ function Placeholder({ view, setView }: { view: View; setView: (view: View) => v
 
 export default function Home() {
   const [view, setView] = useState<View>("overview");
-  return <div className="app-shell"><Sidebar view={view} setView={setView} /><main className="main"><Header view={view} setView={setView} /><motion.div key={view} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .28, ease: "easeOut" }}>{view === "overview" && <Overview setView={setView} />}{view === "scans" && <Scans setView={setView} />}{view === "findings" && <Findings setView={setView} />}{view === "ledger" && <Ledger />}{["assets", "incidents", "lab"].includes(view) && <Placeholder view={view} setView={setView} />}</motion.div></main></div>;
+  return <div className="app-shell"><Sidebar view={view} setView={setView} /><main className="main"><Header view={view} setView={setView} /><motion.div key={view} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .28, ease: "easeOut" }}>{view === "overview" && <Overview setView={setView} />}{view === "scans" && <LiveScans setView={setView} />}{view === "findings" && <Findings setView={setView} />}{view === "ledger" && <Ledger />}{["assets", "incidents", "lab"].includes(view) && <Placeholder view={view} setView={setView} />}</motion.div></main></div>;
 }
