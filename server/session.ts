@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
-const SESSION_COOKIE = "csxdr_session";
+export const SESSION_COOKIE = "csxdr_session";
 const SessionSchema = z.object({
   userId: z.string().uuid(),
   organizationId: z.string().uuid(),
@@ -23,6 +23,19 @@ function sessionSecret() {
   const secret = process.env.CSXDR_SESSION_SECRET;
   if (!secret || secret.length < 32) throw new AccessError("SESSION_NOT_CONFIGURED", 503, "Session verification is not configured.");
   return secret;
+}
+
+export function issueSession(input: { userId: string; organizationId: string; role: Session["role"]; ttlSeconds?: number }) {
+  const claims: Session = {
+    userId: input.userId,
+    organizationId: input.organizationId,
+    role: input.role,
+    sessionId: crypto.randomUUID(),
+    expiresAt: Math.floor(Date.now() / 1000) + (input.ttlSeconds ?? 3600),
+  };
+  const encodedClaims = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+  const signature = createHmac("sha256", sessionSecret()).update(encodedClaims).digest("base64url");
+  return `${encodedClaims}.${signature}`;
 }
 
 function cookieValue(request: Request) {
