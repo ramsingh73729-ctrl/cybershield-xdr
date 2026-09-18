@@ -16,6 +16,8 @@ export type ScanJob = {
   finalUrl?: string;
   httpStatus?: number;
   checkedAt?: string;
+  coverage?: 'passive-perimeter';
+  checksRun?: number;
   findings: PassiveFinding[];
 };
 
