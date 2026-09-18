@@ -16,6 +16,8 @@ export type PassiveScanResult = {
   finalUrl: string;
   httpStatus: number;
   checkedAt: string;
+  coverage: "passive-perimeter";
+  checksRun: number;
   findings: PassiveFinding[];
 };
 
@@ -54,7 +56,9 @@ export async function runPassiveScan(target: string, localLabMode = false): Prom
   const headers = response.headers;
   const endpoint = url.toString();
   const csp = headers.get("content-security-policy")?.toLowerCase() ?? "";
+  const setCookie = headers.get("set-cookie");
   const findings: PassiveFinding[] = [];
+  let checksRun = 14;
 
   if (url.protocol !== "https:") findings.push(finding({ title: "Transport is not encrypted", category: "Cryptography", severity: "high", confidence: 0.99, endpoint, evidence: { protocol: url.protocol }, recommendation: "Serve the application over HTTPS and redirect HTTP to HTTPS." }));
   if (url.protocol === "https:" && !headers.get("strict-transport-security")) findings.push(finding({ title: "HSTS header is missing", category: "Security headers", severity: "medium", confidence: 0.98, endpoint, evidence: { header: "Strict-Transport-Security" }, recommendation: "Add HSTS with an appropriate max-age after confirming HTTPS is universal." }));
@@ -64,8 +68,24 @@ export async function runPassiveScan(target: string, localLabMode = false): Prom
   if (!headers.get("permissions-policy")) findings.push(finding({ title: "Permissions-Policy is missing", category: "Browser hardening", severity: "low", confidence: 0.97, endpoint, evidence: { header: "Permissions-Policy" }, recommendation: "Disable browser capabilities that the application does not need." }));
   if (!headers.get("x-frame-options") && !csp.includes("frame-ancestors")) findings.push(finding({ title: "Clickjacking protection is missing", category: "Access control", severity: "medium", confidence: 0.98, endpoint, evidence: { headers: "X-Frame-Options / CSP frame-ancestors" }, recommendation: "Set X-Frame-Options or a CSP frame-ancestors directive." }));
 
-  const setCookie = headers.get("set-cookie");
+  const corsOrigin = headers.get("access-control-allow-origin");
+  if (corsOrigin === "*") findings.push(finding({ title: "CORS allows every origin", category: "API security", severity: "medium", confidence: 0.95, endpoint, evidence: { header: "Access-Control-Allow-Origin", value: "*" }, recommendation: "Allow only the trusted origins required by the application and review credentialed cross-origin flows." }));
+
+  const disclosedHeaders: Array<[string, string, "low" | "medium"]> = [
+    ["server", "Server", "low"],
+    ["x-powered-by", "X-Powered-By", "medium"],
+    ["x-aspnet-version", "X-AspNet-Version", "low"],
+    ["x-generator", "X-Generator", "low"],
+  ];
+  for (const [header, label, severity] of disclosedHeaders) {
+    if (headers.get(header)) findings.push(finding({ title: `${label} header discloses implementation details`, category: "Information disclosure", severity, confidence: 0.93, endpoint, evidence: { header, present: "true" }, recommendation: `Remove or minimize the ${label} response header to reduce technology fingerprinting.` }));
+  }
+  if (!headers.get("cross-origin-opener-policy")) findings.push(finding({ title: "Cross-Origin-Opener-Policy is missing", category: "Browser hardening", severity: "low", confidence: 0.9, endpoint, evidence: { header: "Cross-Origin-Opener-Policy" }, recommendation: "Set an explicit opener policy where the application does not require cross-origin window relationships." }));
+  if (!headers.get("cross-origin-resource-policy")) findings.push(finding({ title: "Cross-Origin-Resource-Policy is missing", category: "Browser hardening", severity: "low", confidence: 0.9, endpoint, evidence: { header: "Cross-Origin-Resource-Policy" }, recommendation: "Choose a resource policy such as same-origin or same-site where compatible." }));
+  if (setCookie && headers.get("cache-control")?.toLowerCase().includes("public")) findings.push(finding({ title: "Cookie response is publicly cacheable", category: "Session management", severity: "high", confidence: 0.96, endpoint, evidence: { header: "Cache-Control", value: "public with Set-Cookie" }, recommendation: "Use private or no-store caching for responses that set authentication or session cookies." }));
+
   for (const cookie of setCookie ? cookieParts(setCookie) : []) {
+    checksRun += 3;
     const name = cookie.split("=", 1)[0] || "unnamed cookie";
     const normalized = cookie.toLowerCase();
     if (url.protocol === "https:" && !normalized.includes("; secure")) findings.push(finding({ title: `Cookie ${name} is missing Secure`, category: "Session management", severity: "high", confidence: 0.99, endpoint, evidence: { cookie: name, missing: "Secure" }, recommendation: "Mark authentication and session cookies Secure." }));
@@ -73,5 +93,5 @@ export async function runPassiveScan(target: string, localLabMode = false): Prom
     if (!normalized.includes("samesite=")) findings.push(finding({ title: `Cookie ${name} is missing SameSite`, category: "Session management", severity: "medium", confidence: 0.99, endpoint, evidence: { cookie: name, missing: "SameSite" }, recommendation: "Set an explicit SameSite policy appropriate to the application flow." }));
   }
 
-  return { finalUrl: endpoint, httpStatus: response.status, checkedAt: new Date().toISOString(), findings };
+  return { finalUrl: endpoint, httpStatus: response.status, checkedAt: new Date().toISOString(), coverage: "passive-perimeter", checksRun, findings };
 }
