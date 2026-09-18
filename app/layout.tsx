@@ -8,7 +8,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(() => { try { const stored = window.localStorage.getItem("cybershield.theme"); const theme = stored === "dark" || stored === "light" ? stored : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"); document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; } catch {} })();`
+          }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );
